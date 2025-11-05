@@ -6,7 +6,8 @@ Repository of tools and guidance for co-location exercises of air particulate ma
 
 ## Usage
 1. Put your input data in the `data` folder.
-2. "Knit" the "Rmd" file located in the root folder
+2. Make sure that the name of your excel file is the same that the `pm_colocation_report.Rmd` is expecting. If not, either rename the file or change the `data_path` parameter in the `Rmnd` file.
+3. "Knit" the `Rmd` file located in the root folder
     1. If using **Rstudio** or **VSCode**
         1. Open the file `pm_colocation_report.Rmd`
         2. Click on the **Knit** button at the top right of the editor panel.
