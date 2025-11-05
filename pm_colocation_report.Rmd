@@ -1,0 +1,1357 @@
+---
+title: " "
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output: html_document
+params:
+    version: 1.3
+    data_path: './data/input_data_MarewaPark.xlsx'
+---
+
+```{r setup, include=FALSE}
+library(tidyverse)
+library(readr)
+library(ggplot2)
+library(janitor)
+library(pracma)
+library(flextable)
+library(lubridate)
+library(gridExtra)
+library(officer)
+
+
+# Function to choose colouring of cells for tests in Report page
+colouring_test_result <- function(flextable, row, condition) {
+    flextable %>%
+        bg(
+            i = row,
+            j = c("item2", "info2"),
+            bg = ifelse(condition, "#70AD47", "#FFC000"),
+            part = "body"
+        )
+}
+
+
+# parameter doesn't need to change.
+rm_uncertainty <- 1
+max_uncertaintiy <- 0.25
+
+# version (For user to change in the headers)
+version <- params$version
+
+# data path (For user to change in the headers)
+data_path <- params$data_path
+```
+
+```{r read_data, include = FALSE}
+# Read data
+data <- readxl::read_excel(path = data_path, sheet = "Input Data") %>%
+    # Clean the column names
+    janitor::clean_names()
+
+# View first 6 rows for checking
+# flextable(head(data)) %>%
+#   flextable::autofit()
+```
+
+```{r logo, echo = FALSE, message = FALSE}
+# Get the entire metadata table
+council <-
+    readxl::read_excel(
+        path = data_path,
+        sheet = "Metadata",
+        col_names = FALSE,
+        col_types = c("text", "text")
+    ) %>%
+    # Only keep the rows that we need for this table.
+    slice(3) %>%
+    # Clean the column names
+    janitor::clean_names() %>%
+    # Make the table wider
+    pivot_wider(names_from = x1, values_from = x2) %>%
+    # Clean the column names
+    janitor::clean_names() %>%
+    pull(organisation)
+
+# Identify the council
+council_name <- case_when(
+    council == "Auckland Council" ~ "Tamaki_makaurau",
+    council == "Bay of Plenty Regional Council" ~ "Bay_of_plenty",
+    council == "Environment Canterbury" ~ "Environment_canterbury",
+    council == "Environment Southland" ~ "Environment_southland",
+    council == "Gisborne District Council" ~ "Gisborne",
+    council == "Greater Wellington Regional Council" ~ "Greater_wellington",
+    council == "Hawke's Bay Regional Council" ~ "Hawkes_bay",
+    council == "Horizons Regional Council" ~ "Horizons",
+    council == "Marlborough District Council" ~ "Marborough",
+    council == "Nelson City Council" ~ "Nelson_city_council",
+    council == "Northland Regional Council" ~ "Northland_regional_council",
+    council == "Otago Regional Council" ~ "Otago_regional_council",
+    council == "Taranaki Regional Council" ~ "Taranaki_regional_council",
+    council == "Tasman District Council" ~ "Tasman_district_council",
+    council == "Waikato Regional Council" ~ "Waikato_regional_council",
+    council == "West Coast Regional Council" ~ "The_west_coast_regional_council"
+)
+
+# Create the logo path
+logo_path <- paste("data/logo/", council_name, ".png", sep = "")
+```
+
+<img src="`r logo_path`" alt="Council Logo"/>
+
+#  {.tabset}
+
+## RESULTS
+
+```{r general_info, include=FALSE}
+## Read metadata
+
+# Get the Limit Value (LV)
+lv <- readxl::read_excel(path = data_path, sheet = "Metadata", col_names = FALSE, col_types = c("text", "text")) %>%
+    # Clean the column names
+    janitor::clean_names() %>%
+    # Make the table wider to pull the limit value
+    pivot_wider(names_from = x1, values_from = x2) %>%
+    # Pull the value
+    pull(8) %>%
+    # Make the value numeric
+    as.numeric()
+
+# Get the entire metadata table
+metadata_old <-
+    readxl::read_excel(
+        path = data_path,
+        sheet = "Metadata",
+        col_names = FALSE,
+        col_types = c("text", "text")
+    ) %>%
+    # Only keep the rows that we need for this table.
+    slice(1:4, 6:8, 11) %>%
+    # Clean the column names
+    janitor::clean_names() %>%
+    # Make the table wider
+    pivot_wider(names_from = x1, values_from = x2) %>%
+    # Clean the column names
+    janitor::clean_names() %>%
+    # Clean the date data type to numeric
+    mutate(
+        sample_start_date = as.numeric(sample_start_date),
+        sample_end_date = as.numeric(sample_end_date)
+    ) %>%
+    # Make the numeric date date type
+    mutate(
+        sample_start_date = janitor::excel_numeric_to_date(sample_start_date),
+        sample_end_date = janitor::excel_numeric_to_date(sample_end_date)
+    ) %>%
+    # Update the format to NZ date format
+    mutate(
+        sample_start_date = format(sample_start_date, "%d-%m-%Y"),
+        sample_end_date = format(sample_end_date, "%d-%m-%Y")
+    ) %>%
+    # Make the data back to character (so it can be made a longer table wit the same data type)
+    mutate(
+        sample_start_date = as.character(sample_start_date),
+        sample_end_date = as.character(sample_end_date)
+    ) %>%
+    # Make the table longer
+    pivot_longer(
+        cols = c(
+            sample_start_date,
+            sample_end_date,
+            organisation,
+            site_name,
+            primary_instrument,
+            candidate_instrument,
+            limit_value_lv,
+            data_processed_by
+        ),
+        names_to = "item",
+        values_to = "info"
+    )
+
+# Create blank row to be added
+blank_rows <- tibble(item = c(" ", " "), info = c(" ", " "))
+
+# Add blank rows
+metadata <- rbind(metadata_old, blank_rows, blank_rows)
+
+# Create the left side of the metadata table
+metadata_left <- metadata %>%
+    slice(1:6)
+
+# Create the right side of the metadata table
+metadata_right <- metadata %>%
+    slice(7:12) %>%
+    rename(
+        item2 = item,
+        info2 = info
+    )
+
+# Bind the metadata table
+metadata_table <- cbind(metadata_left, metadata_right) %>%
+    # Clean the names to be displayed
+    mutate(
+        item = case_when(
+            item == "sample_start_date" ~ "Sample Start Date",
+            item == "sample_end_date" ~ "Sample End Date",
+            item == "organisation" ~ "Organisation",
+            item == "site_name" ~ "Site Name",
+            item == "primary_instrument" ~ "Primary Instrument",
+            item == "candidate_instrument" ~ "Candidate Instrument"
+        ),
+        item2 = case_when(
+            item2 == "limit_value_lv" ~ "Limit Value (LV)",
+            item2 == "data_processed_by" ~ "Data processed by:"
+        )
+    )
+
+
+# Extract the pollutant ## Update
+pollutant <-
+    readxl::read_excel(
+        path = data_path,
+        sheet = "Metadata",
+        col_names = FALSE,
+        col_types = c("text", "text")
+    ) %>%
+    # Clean the column names
+    janitor::clean_names() %>%
+    # Only keep rows that are needed
+    slice(9) %>%
+    pull(x2)
+
+
+# Extract average period ## Update
+average_period <- readxl::read_excel(
+    path = data_path,
+    sheet = "Metadata",
+    col_names = FALSE,
+    col_types = c("text", "text")
+) %>%
+    # Clean the column names
+    janitor::clean_names() %>%
+    # Make the table wider to pull the limit value
+    pivot_wider(names_from = x1, values_from = x2) %>%
+    # Pull the value
+    pull(10)
+```
+
+```{r summary_stat, echo=FALSE}
+### Prepare Raw data info
+
+## Calculate count and mean
+count <- nrow(data)
+mean_ci <- round(mean(data$candidate_instrument_y), 2)
+mean_ri <- round(mean(data$primary_instrument_x), 2)
+
+
+## Calculate outliers
+
+# Get the quantile
+quantile <- stats::quantile(data$primary_instrument_x, probs = seq(0, 1, 0.25), names = FALSE)
+# Get the first quantile
+q1 <- quantile[2]
+# Get the third quantile
+q3 <- quantile[4]
+# Get the interquantile range
+iqr <- q3 - q1
+# Calculate the Tukey Fence
+AR3 <- iqr * 1.5
+# Calculate the upper limit
+AR2 <- q3 + AR3
+
+# Calculate the number of outliers
+outlier_count <- length(data$primary_instrument_x[data$primary_instrument_x > AR2])
+# Calculate the proportion of outliers
+outlier_prop <- outlier_count / count
+
+## Calculate R squared
+ml <- lm(candidate_instrument_y ~ primary_instrument_x, data = data)
+r_squared <- summary(ml)$r.squared
+```
+
+```{r orthogonal_regression, echo=FALSE}
+## Calculate Orthogonal regression
+# https://search.r-project.org/CRAN/refmans/pracma/html/odregress.html
+odr <- odregress(data$primary_instrument_x, data$candidate_instrument_y)
+slope <- odr$coeff[1]
+intercept <- odr$coeff[2]
+```
+
+```{r uncertainty, echo=FALSE}
+## Calculate uncertainty
+dxx <- sum((data$primary_instrument_x - mean_ri)^2)
+dyy <- sum((data$candidate_instrument_y - mean_ci)^2)
+dxdy <- sum((data$primary_instrument_x - mean_ri) * (data$candidate_instrument_y - mean_ci))
+
+u_slope <- sqrt((dyy - (dxdy^2 / dxx)) / ((count - 2) * dxx))
+u_intercept <- u_slope * sqrt(sum((data$primary_instrument_x)^2) / count)
+u_calibration <- sqrt(u_slope^2 * lv^2 + u_intercept^2)
+
+rss <- sum((data$candidate_instrument_y - intercept - slope * data$primary_instrument_x)^2)
+random_term <- sqrt(rss / ((count - 2) - rm_uncertainty^2)) #### UPDATE
+bias_at_lv <- intercept + (slope - 1) * lv
+combined_uncertainty <- sqrt(random_term^2 + bias_at_lv^2)
+expanded_relative_uncertainty <- 2 * combined_uncertainty / lv
+```
+
+```{r raw_data_result, echo=FALSE}
+## Create the raw data results
+measured_results <- data %>%
+    # Label each row with the criteria of RM > LV
+    mutate(
+        rm_lv = ifelse(primary_instrument_x > lv, 1, 0),
+        rm_half_lv = ifelse(primary_instrument_x > 0.5 * lv, 1, 0)
+    ) %>%
+    # Summarise the info
+    summarise(
+        n = n(), # Count
+        outlier_count = outlier_count, # The number of outliers
+        outlier_prop = outlier_prop, # The proportion of outliers
+        mean_ci = round(mean(candidate_instrument_y, na.rm = T), 2), # Mean of CI
+        mean_ri = round(mean(primary_instrument_x, na.rm = T), 2), # Mean of RI
+        number_of_rm_over_half_lv = sum(rm_half_lv, na.rm = T), # Number of PI > 0.5LV
+        number_of_rm_over_lv = sum(rm_lv, na.rm = T) # Number of PI > LV
+    ) %>%
+    # Add other info to the table
+    mutate(
+        slope_b = slope,
+        uncertainty_b = u_slope,
+        intercept_a = intercept,
+        uncertainty_a = u_intercept,
+        rsquared = r_squared,
+        combined_uncertainty = combined_uncertainty,
+        ex_rel_u = expanded_relative_uncertainty
+    ) %>%
+    # Make the table longer for display purpose
+    pivot_longer(
+        cols = c(everything()),
+        names_to = "description",
+        values_to = "value"
+    ) %>%
+    # Clean the description and value format for info for display
+    mutate(
+        Value = case_when(
+            description %in% c(
+                "n",
+                "outlier_count",
+                "number_of_rm_over_lv",
+                "number_of_rm_over_half_lv"
+            ) ~ as.character(paste(round(value, 0), "n", sep = " ")),
+            description %in% c("mean_ci", "mean_ri") ~ as.character(paste(round(value, 2), "\u00b5g/m\u00b3", sep = " ")),
+            description %in% c("slope_b", "intercept_a", "rsquared") ~ as.character(round(value, 3)),
+            description %in% c("uncertainty_b", "uncertainty_a") ~ as.character(round(value, 3)),
+            description %in% c("outlier_prop") ~ paste(as.character(round(value *
+                100, 1)), "%", sep = ""),
+            description %in% c("combined_uncertainty") ~ paste(as.character(round(value, 3)), "\u00b5g/m\u00b3", sep = " "),
+            description %in% c("ex_rel_u") ~ paste(as.character(round(value * 100, 3)), "%", sep = "")
+        ),
+        Description = case_when(
+            description == "n" ~ "Data Points",
+            description == "outlier_count" ~ "Outliers",
+            description == "outlier_prop" ~ "Outliers",
+            description == "number_of_rm_over_lv" ~ "Number of PI > LV",
+            description == "number_of_rm_over_half_lv" ~ "Number of PI > 0.5LV",
+            description == "mean_ri" ~ "Mean PI",
+            description == "mean_ci" ~ "Mean CI",
+            description == "slope_b" ~ "Slope (b)",
+            description == "intercept_a" ~ "Intercept (a)",
+            description == "uncertainty_b" ~ "Uncertainty of b",
+            description == "uncertainty_a" ~ "Uncertainty of a",
+            description == "rsquared" ~ "R\U00B2",
+            description == "combined_uncertainty" ~ "Combined Uncertainty",
+            description == "ex_rel_u" ~ "Expanded Relative Uncertainty"
+        )
+    ) %>%
+    # Only keep the columns for display
+    select(Description, Value)
+```
+
+```{r raw_regression, echo=FALSE}
+# Define the formula position
+x_pos <- max(data$primary_instrument_x) * 0.8
+y_pos <- max(data$candidate_instrument_y) * 0.95
+
+### Prepare the plot
+plot_raw <- data %>%
+    ggplot() +
+    geom_point(aes(x = primary_instrument_x, y = candidate_instrument_y), colour = "#4472C4") +
+    geom_abline(slope = slope, intercept = intercept, color = "#000000", linetype = "dashed") +
+    annotate("text", x = x_pos, y = y_pos, label = paste("y =", round(slope, 3), "x +", round(intercept, 3), sep = " ")) +
+    ggtitle("Raw Data") +
+    xlab("RI (\u00b5g/m\u00b3)") +
+    ylab("CI (\u00b5g/m\u00b3)") +
+    scale_y_continuous(limits = c(0, NA), breaks = seq(0, 100, by = 10)) +
+    theme_minimal() +
+    theme(plot.title = element_text(hjust = 0.5))
+```
+
+```{r adj_summary_stat, echo = FALSE}
+### Prepare Adjusted results info
+
+
+## Calculate adjusted ci
+data$adjusted_candidate_instrument <- (data$candidate_instrument_y - intercept) / slope
+
+mean_a_ci <- mean(data$adjusted_candidate_instrument, na.rm = T)
+
+
+## Calculate outliers
+# Get the quantile
+quantile_a <- stats::quantile(data$adjusted_candidate_instrument, probs = seq(0, 1, 0.25), names = FALSE)
+# Get the first quantile
+q1_a <- quantile_a[2]
+# Get the third quantile
+q3_a <- quantile_a[4]
+# Get the interquantile range
+iqr_a <- q3_a - q1_a
+# Calculate the Tukey Fence
+AR3_a <- iqr_a * 1.5
+# Calculate the upper limit
+AR2_a <- q3_a + AR3_a
+
+# Calculate the number of outliers
+outlier_count_a <- length(data$adjusted_candidate_instrument[data$adjusted_candidate_instrument > AR2_a])
+# Calculate the proportion of outliers
+outlier_prop_a <- outlier_count_a / count
+
+
+## Calculate R squared
+a_ml <- lm(adjusted_candidate_instrument ~ primary_instrument_x, data = data)
+a_r_squared <- summary(a_ml)$r.squared
+```
+
+```{r adj_orthogonal_regression, echo = FALSE}
+## Calculate slope & intercepted based on adjusted ci
+a_odr <- odregress(data$primary_instrument_x, data$adjusted_candidate_instrument)
+a_slope <- a_odr$coeff[1]
+a_intercept <- a_odr$coeff[2]
+```
+
+```{r adj_uncertainty, echo = FALSE}
+## Calculate uncertainty
+
+a_dxx <- sum((data$primary_instrument_x - mean_ri)^2)
+a_dyy <- sum((data$adjusted_candidate_instrument - mean_a_ci)^2)
+a_dxdy <- sum((data$primary_instrument_x - mean_ri) * (data$adjusted_candidate_instrument - mean_a_ci))
+
+a_u_slope <- sqrt((a_dyy - (a_dxdy^2 / a_dxx)) / ((count - 2) * a_dxx))
+a_u_intercept <- a_u_slope * sqrt(sum((data$primary_instrument_x)^2) / count)
+
+a_rss <- sum((data$adjusted_candidate_instrument - a_intercept - a_slope * data$primary_instrument_x)^2)
+a_random_term <- sqrt(a_rss / ((count - 2) - rm_uncertainty^2 + u_calibration^2)) #### UPDATE
+a_bias_at_lv <- a_intercept + (a_slope - 1) * lv
+a_combined_uncertainty <- sqrt(a_random_term^2 + a_bias_at_lv^2)
+a_expanded_relative_uncertainty <- 2 * a_combined_uncertainty / lv
+```
+
+```{r adj_data_result, echo = FALSE}
+## Create the transformed data results
+transformed_results <- data %>%
+    # Label each row with the criteria of RM > LV
+    mutate(
+        rm_lv = ifelse(primary_instrument_x > lv, 1, 0),
+        rm_half_lv = ifelse(adjusted_candidate_instrument > 0.5 * lv, 1, 0) #### UPDATE
+    ) %>%
+    # Summarise the info
+    summarise(
+        n = n(), # Count
+        outlier_count = outlier_count_a, # The number of outliers
+        outlier_prop = outlier_prop_a, # The proportion of outliers
+        mean_a_ci = round(mean(adjusted_candidate_instrument, na.rm = T), 2), # Mean of CI
+        mean_ri = round(mean(primary_instrument_x, na.rm = T), 2), # Mean of RI
+        number_of_rm_over_half_lv = sum(rm_half_lv, na.rm = T), # Number of PI > 0.5LV
+        number_of_rm_over_lv = sum(rm_lv, na.rm = T) # Number of PI > LV
+    ) %>%
+    # Add other info to the table
+    mutate(
+        slope_b = a_slope,
+        uncertainty_b = a_u_slope,
+        intercept_a = a_intercept,
+        uncertainty_a = a_u_intercept,
+        rsquared = a_r_squared,
+        combined_uncertainty = a_combined_uncertainty,
+        ex_rel_u = a_expanded_relative_uncertainty
+    ) %>%
+    # Make the table longer for display purpose
+    pivot_longer(
+        cols = c(everything()),
+        names_to = "description",
+        values_to = "value"
+    ) %>%
+    # Clean the description and value format for info for display
+    mutate(
+        Value = case_when(
+            description %in% c(
+                "n",
+                "outlier_count",
+                "number_of_rm_over_lv",
+                "number_of_rm_over_half_lv"
+            ) ~ as.character(paste(round(value, 0), "n", sep = " ")),
+            description %in% c("mean_a_ci", "mean_ri") ~ as.character(paste(round(value, 2), "\u00b5g/m\u00b3", sep = " ")),
+            description %in% c("slope_b", "intercept_a", "rsquared") ~ as.character(round(value, 3)),
+            description %in% c("uncertainty_b", "uncertainty_a") ~ as.character(round(value, 3)),
+            description == "outlier_prop" ~ paste(as.character(round(value * 100, 1)), "%", sep = ""),
+            description %in% c("combined_uncertainty") ~ paste(as.character(round(value, 3)), "\u00b5g/m\u00b3", sep = " "),
+            description == "ex_rel_u" ~ paste(as.character(round(value * 100, 3)), "%", sep = "")
+        ),
+        Description = case_when(
+            description == "n" ~ "Data points",
+            description == "outlier_count" ~ "Outliers",
+            description == "outlier_prop" ~ "Outliers",
+            description == "number_of_rm_over_lv" ~ "Number of PI > LV",
+            description == "number_of_rm_over_half_lv" ~ "Number of PI > 0.5LV",
+            description == "mean_ri" ~ "Mean PI",
+            description == "mean_a_ci" ~ "Mean Adjusted CI",
+            description == "slope_b" ~ "Slope (b)",
+            description == "intercept_a" ~ "Intercept (a)",
+            description == "uncertainty_b" ~ "Uncertainty of b",
+            description == "uncertainty_a" ~ "Uncertainty of a",
+            description == "rsquared" ~ "R\U00B2",
+            description == "combined_uncertainty" ~ "Combined Uncertainty",
+            description == "ex_rel_u" ~ "Expanded Relative Uncertainty"
+        )
+    ) %>%
+    # Only keep the columns for display
+    select(Description, Value)
+```
+
+```{r adj_regression, echo=FALSE}
+# Define the formula position
+x_pos <- max(data$primary_instrument_x) * 0.8
+y_pos <- max(data$adjusted_candidate_instrument) * 0.95
+
+### Prepare the plot
+plot_calibrated <- data %>%
+    ggplot() +
+    geom_point(aes(x = primary_instrument_x, y = adjusted_candidate_instrument), colour = "#70AD47") +
+    geom_abline(slope = a_slope, intercept = a_intercept, color = "#000000", linetype = "dashed") +
+    annotate("text", x = x_pos, y = y_pos, label = paste("y =", round(a_slope, 3), "x +", round(a_intercept, 3), sep = " ")) +
+    ggtitle("Transformed Data") +
+    xlab("RI (\u00b5g/m\u00b3)") +
+    ylab("CI (\u00b5g/m\u00b3)") +
+    scale_y_continuous(limits = c(0, NA), breaks = seq(0, 100, by = 10)) +
+    theme_minimal() +
+    theme(plot.title = element_text(hjust = 0.5))
+```
+
+```{r report, echo=FALSE, fig.width=10}
+# Add row to the middle of the measured results
+measured_results2 <- measured_results %>%
+    slice(1:7) %>%
+    add_row(
+        Description = "REGRESSION RESULTS (RAW DATA)",
+        Value = "REGRESSION RESULTS (RAW DATA)"
+    ) %>%
+    rbind(measured_results %>%
+        slice(8:14))
+
+# Add row to the middle of the transformed results
+transformed_results2 <- transformed_results %>%
+    slice(1:7) %>%
+    add_row(
+        Description = "REGRESSION RESULTS AFTER TRANSFORMATION",
+        Value = "REGRESSION RESULTS AFTER TRANSFORMATION"
+    ) %>%
+    rbind(transformed_results %>%
+        slice(8:14)) %>%
+    rename(
+        Description2 = Description,
+        Value2 = Value
+    )
+
+# Prepare function for black border
+black_border <- fp_border(color = "black", width = 1)
+
+#
+metadata_table %>%
+    # Add the header for the results
+    add_row(
+        item = "RAW DATA",
+        info = "RAW DATA",
+        item2 = "RESULTS AFTER TRANSFORMATION ",
+        info2 = "RESULTS AFTER TRANSFORMATION "
+    ) %>%
+    # Bind the results table to the metadata table
+    rbind(
+        cbind(measured_results2, transformed_results2) %>%
+            rename(
+                item = Description,
+                info = Value,
+                item2 = Description2,
+                info2 = Value2
+            )
+    ) %>%
+    # Make it flextable
+    flextable() %>%
+    # Set the header to blank
+    set_header_labels(
+        item = "",
+        info = "",
+        item2 = "",
+        info2 = ""
+    ) %>%
+    # Add the header at the top
+    add_header_row(
+        values = c("PM Co-location Data Results"),
+        top = TRUE,
+        colwidths = c(4)
+    ) %>%
+    # Make the header bold
+    bold(part = "header") %>%
+    # Colour the whole table grey
+    bg(
+        i = NULL,
+        bg = "#999999",
+        part = "all"
+    ) %>%
+    # Merge the header row for the results
+    merge_h(i = c(7, 15), part = "body") %>%
+    # Make these two header rows bold
+    bold(i = c(7, 15), part = "body") %>%
+    # Make the measured results blue
+    bg(
+        i = 7:22,
+        j = c("item", "info"),
+        bg = "#4472C4",
+        part = "body"
+    ) %>%
+    # Make the transformed results green
+    bg(
+        i = 7:22,
+        j = c("item2", "info2"),
+        bg = "#70AD47",
+        part = "body"
+    ) %>%
+    # Add the black border line
+    border_outer(border = black_border) %>%
+    border_inner_h(border = black_border) %>%
+    border_inner_v(border = black_border) %>%
+    # Adjust the table width
+    autofit()
+
+# Put the plots side by side
+grid.arrange(plot_raw, plot_calibrated, ncol = 2)
+```
+
+## REPORT
+
+```{r report_metadata_table, include = FALSE}
+### Create the metadata part of the Report
+
+# Get the entire metadata table
+rp_metadata_old <-
+    readxl::read_excel(
+        path = data_path,
+        sheet = "Metadata",
+        col_names = FALSE,
+        col_types = c("text", "text")
+    ) %>%
+    # Only keep rows that are needed
+    slice(2:4, 6, 7, 11:13) %>%
+    # Clean the column names
+    janitor::clean_names() %>%
+    # Make the table wider
+    pivot_wider(names_from = x1, values_from = x2) %>%
+    # Clean the column names
+    janitor::clean_names() %>%
+    # Clean the date data type to numeric
+    mutate(
+        sample_end_date = as.numeric(sample_end_date)
+    ) %>%
+    # Make the numeric date date type
+    mutate(
+        sample_end_date = janitor::excel_numeric_to_date(sample_end_date)
+    ) %>%
+    # Update the format to NZ date format
+    mutate(
+        sample_end_date = format(sample_end_date, "%d-%m-%Y")
+    ) %>%
+    # Make the data back to character (so it can be made a longer table wit the same data type)
+    mutate(
+        sample_end_date = as.character(sample_end_date)
+    ) %>%
+    # Make the table longer
+    pivot_longer(
+        cols = c(
+            organisation,
+            primary_instrument,
+            candidate_instrument,
+            site_name,
+            site_classification,
+            data_processed_by,
+            sample_end_date,
+            other_pollutants_measured
+        ),
+        names_to = "item",
+        values_to = "info"
+    )
+
+
+# Create title to be added
+title_row <-
+    tibble(
+        item = c(
+            paste(
+                rp_metadata_old$info[4],
+                pollutant,
+                "co-location report",
+                sep = " "
+            )
+        ),
+        info = c(
+            paste(
+                rp_metadata_old$info[4],
+                pollutant,
+                "co-location report",
+                sep = " "
+            )
+        )
+    )
+
+
+# Create the left side of the metadata table
+rp_metadata_left <- title_row %>%
+    rbind(rp_metadata_old %>% slice(1:5))
+
+# Create today_row to be added
+today_row <- tibble(
+    item = c(
+        "Data of test report:"
+    ),
+    info = today()
+) %>%
+    # Update the format to NZ date format
+    mutate(
+        info = format(info, "%d-%m-%Y")
+    ) %>%
+    # Make the data back to character (so it can be made a longer table wit the same data type)
+    mutate(
+        info = as.character(info)
+    )
+
+# Create the right side of the metadata table
+rp_metadata_right <- blank_rows %>%
+    rbind(rp_metadata_old %>% slice(6)) %>%
+    rbind(today_row) %>%
+    rbind(rp_metadata_old %>% slice(7:8)) %>%
+    rename(
+        item2 = item,
+        info2 = info
+    )
+
+
+# Bind the metadata table
+rp_metadata_table <- cbind(rp_metadata_left, rp_metadata_right) %>%
+    # Clean the names to be displayed
+    mutate(
+        item = case_when(
+            item == "site_classification" ~ "Site classification:",
+            item == "organisation" ~ "Organisation:",
+            item == "site_name" ~ "Site name:", ### UPDATE
+            item == "primary_instrument" ~ "Primary Instrument:",
+            item == "candidate_instrument" ~ "Candidate Instrument:",
+            .default = item
+        ),
+        item2 = case_when(
+            item2 == "sample_end_date" ~ "Date of last co-location:",
+            item2 == "other_pollutants_measured" ~ "Other pollutants:", ### UPDATE
+            item2 == "data_processed_by" ~ "Contact person:",
+            .default = item2
+        )
+    ) %>%
+    # Only keep rows that are not the title
+    slice(2:6)
+```
+
+```{r summary_stats, include = FALSE}
+### Create the summary statistics part of the Report
+
+# Create summary stat row to be added
+summary_stat_title_row <-
+    tibble(
+        item = c("Summary Statistics"),
+        info = c("Summary Statistics")
+    )
+
+summary_stat_title_row2 <-
+    tibble(item = c("Template version:"), info = c(version))
+
+# Create co-location dates row to be added
+co_location_date <-
+    tibble(
+        item = c("Co-location start date:", "Co-location end date:"),
+        info = c(metadata_table$info[1], metadata_table$info[2])
+    )
+
+# Create sample row to be added
+sample_row <- tibble(item = c("Number of samples"), info = c(nrow(data)))
+
+# Get the co-location period
+co_location_period <-
+    readxl::read_excel(
+        path = data_path,
+        sheet = "Metadata",
+        col_names = FALSE,
+        col_types = c("text", "text")
+    ) %>%
+    # Only keep the rows that we need for this table.
+    slice(1:2) %>%
+    # Clean the column names
+    janitor::clean_names() %>%
+    # Make the table wider
+    pivot_wider(names_from = x1, values_from = x2) %>%
+    # Clean the column names
+    janitor::clean_names() %>%
+    # Clean the date data type to numeric
+    mutate(
+        sample_start_date = as.numeric(sample_start_date),
+        sample_end_date = as.numeric(sample_end_date)
+    ) %>%
+    # Make the numeric date date type
+    mutate(
+        sample_start_date = janitor::excel_numeric_to_date(sample_start_date),
+        sample_end_date = janitor::excel_numeric_to_date(sample_end_date)
+    )
+
+# Calculate the co-location period
+co_location_period <-
+    co_location_period$sample_end_date[1] - co_location_period$sample_start_date[1]
+
+# Sample period test
+sample_period_result <-
+    ifelse(co_location_period > 364,
+        "Sample period > 12 months",
+        "Sample period less than 12 months"
+    )
+
+
+# Sample size test
+sample_size_result <-
+    ifelse(nrow(data) > 40, "Sample size sufficient", "Sample size too small")
+
+# Create instrument row to be added
+raw_instrument_title_row <-
+    tibble(item = c(" "), info = c(paste("Raw", metadata_old$info[6], "\u00b5g/m\u00b3", sep = " ")))
+
+# Create instrument row to be added
+transformed_instrument_title_row <-
+    tibble(info = c(" "), item = c(paste(
+        "Transformed", metadata_old$info[6], "\u00b5g/m\u00b3",
+        sep = " "
+    ))) %>%
+    mutate(info = item) ### Update
+
+
+# Raw Stats table
+summary_stat_raw <-
+    tibble(
+        item = c(
+            "Average PM₁₀ Conc", ### Update
+            "Minimum PM₁₀ Conc",
+            "Maximum PM₁₀ Conc"
+        ),
+        info = c(
+            round(mean(data$candidate_instrument_y), 1),
+            round(min(data$candidate_instrument_y), 1),
+            round(max(data$candidate_instrument_y), 1)
+        )
+    )
+
+# Transformed Stats table
+summary_stat_transformed <-
+    tibble(
+        item = c(
+            round(mean(data$adjusted_candidate_instrument), 1),
+            round(min(data$adjusted_candidate_instrument), 1),
+            round(max(data$adjusted_candidate_instrument), 1)
+        ),
+        info = c(
+            "",
+            "",
+            ""
+        )
+    ) %>%
+    mutate(info = item) ### Update
+
+# Create the left table
+summary_stat_left <- summary_stat_title_row %>%
+    rbind(co_location_date) %>%
+    rbind(sample_row) %>%
+    rbind(raw_instrument_title_row) %>%
+    rbind(summary_stat_raw)
+
+
+# Create the right table
+summary_stat_right <- summary_stat_title_row2 %>%
+    # rbind(blank_rows[1,]) %>%
+    rbind(tibble(
+        item = paste(pollutant, average_period, "average", sep = " "),
+        info = paste(pollutant, average_period, "average", sep = " ")
+    )) %>% #### UPDATE
+    rbind(tibble(item = sample_period_result, info = sample_period_result)) %>%
+    rbind(tibble(item = sample_size_result, info = sample_size_result)) %>%
+    rbind(transformed_instrument_title_row) %>%
+    rbind(summary_stat_transformed) %>%
+    rename(
+        item2 = item,
+        info2 = info
+    )
+
+# Bind the summary stats table
+summary_stats_table <- cbind(summary_stat_left, summary_stat_right)
+```
+
+```{r regression_results, include = FALSE}
+### Create the Regression results:RAW DATA table
+
+# Create regression result title to be added
+regression_results_raw_title_row <-
+    tibble(
+        item = c("Regression results: RAW DATA"),
+        info = c("Regression results: RAW DATA")
+    )
+
+regression_results_transformed_title_row <-
+    tibble(
+        item = c("Regression results: TRANSFORMED DATA"),
+        info = c("Regression results: TRANSFORMED DATA")
+    )
+
+
+# Create raw regression results part on the left
+r_results_r_table <-
+    tibble(
+        item = c(
+            "R\U00B2",
+            "Slope",
+            "Intercept",
+            "Expanded rel uncertainty"
+        ),
+        info = c(
+            round(r_squared, 3),
+            round(slope, 3),
+            round(intercept, 3),
+            measured_results$Value[measured_results$Description == "Expanded Relative Uncertainty"]
+        )
+    )
+
+### CHECK slope and intercept test
+
+## Test results for RAW DATA
+r_slope_test <-
+    ifelse(abs(slope - 1) > u_slope * qt(1 - 0.05 / 2, count - 2),
+        "Slope uncertainty exceeds limits",
+        "Pass"
+    )
+r_intercept_test <-
+    ifelse(
+        abs(intercept) > intercept * qt(1 - 0.05 / 2, count - 2),
+        "Intercept uncertainty exceeds limits",
+        "Pass"
+    )
+r_e_r_u_test <-
+    ifelse(expanded_relative_uncertainty < 0.25, "Pass", "Fail")
+
+# r_slope_test <- ifelse(abs(slope/u_slope)>qt(0.95, count-2), 'Slope uncertainty exceeds limits', 'Pass')
+# r_intercept_test <- ifelse(abs(intercept/u_intercept)>qt(0.95, count-2), 'Intercept uncertainty exceeds limits', 'Pass')
+
+
+# Create transformed regression results to be added
+r_results_t_table <-
+    tibble(
+        item = c(
+            "Slope",
+            "Intercept",
+            "Expanded rel uncertainty"
+        ),
+        info = c(
+            round(a_slope, 3),
+            round(a_intercept, 3),
+            transformed_results$Value[transformed_results$Description == "Expanded Relative Uncertainty"]
+        )
+    )
+
+### CHECK slope and intercept test
+t_slope_test <-
+    ifelse(
+        abs(a_slope - 1) > a_u_slope * qt(1 - 0.05 / 2, count - 2), ### Update
+        "Slope uncertainty does not pass test", ### Update
+        "Pass"
+    )
+t_intercept_test <-
+    ifelse(
+        abs(a_intercept) > a_u_intercept * qt(1 - 0.05 / 2, count - 2), ### Update
+        "Intercept uncertainty does not pass test", ### Update
+        "Pass"
+    )
+t_e_r_u_test <-
+    ifelse(a_expanded_relative_uncertainty < 0.25, "Pass", "Fail")
+
+# t_slope_test <- ifelse(abs(a_slope/a_u_slope)>qt(0.95, count-2), 'Slope uncertainty exceeds limits', 'Pass')
+# t_intercept_test <- ifelse(abs(a_intercept/a_u_intercept)>qt(0.95, count-2), 'Intercept uncertainty exceeds limits', 'Pass')
+
+
+# Bind the Regression results: RAW DATA for the left table
+r_regression_results_left <- regression_results_raw_title_row %>%
+    rbind(r_results_r_table)
+
+# Bind the Regression results: RAW DATA for the right table
+r_regression_results_right <- regression_results_raw_title_row %>%
+    rbind(blank_rows[1, ]) %>%
+    rbind(tibble(
+        item = c(r_slope_test, r_intercept_test, r_e_r_u_test),
+        info = c(r_slope_test, r_intercept_test, r_e_r_u_test)
+    )) %>%
+    rename(
+        item2 = item,
+        info2 = info
+    )
+
+# Combine left and right tables
+r_regression_results_table <-
+    cbind(r_regression_results_left, r_regression_results_right)
+
+# Bind the Regression results: TRANSFORMED DATA for the left table
+t_regression_results_left <-
+    regression_results_transformed_title_row %>%
+    rbind(r_results_t_table)
+
+# Bind the Regression results: TRANSFORMED DATA for the right table
+t_regression_results_right <-
+    regression_results_transformed_title_row %>%
+    rbind(tibble(
+        item = c(t_slope_test, t_intercept_test, t_e_r_u_test),
+        info = c(t_slope_test, t_intercept_test, t_e_r_u_test)
+    )) %>%
+    rename(
+        item2 = item,
+        info2 = info
+    )
+
+# Combine left and right tables
+t_regression_results_table <-
+    cbind(t_regression_results_left, t_regression_results_right)
+```
+
+```{r recommendation, include = FALSE}
+### F2 and F3 Test for the recommendation
+raw_data_okay <-
+    ifelse(r_e_r_u_test == "Pass", #### Update
+        "OK",
+        "NO"
+    )
+adjusted_data_okay <-
+    ifelse(t_e_r_u_test == "Pass", #### Update
+        "OK",
+        "NO"
+    )
+
+### Form the recommendation section.
+rec <-
+    case_when(
+        raw_data_okay == "OK" ~ "Raw data OK, no transformation needed",
+        raw_data_okay == "NO" &
+            adjusted_data_okay == "OK" ~ "Recommendation: Data be transformed",
+        .default = "Raw and transformed data fail the test" ###
+    )
+
+rec2 <-
+    ifelse(
+        raw_data_okay == "NO" &
+            adjusted_data_okay == "OK",
+        paste(
+            rp_metadata_old$info[3],
+            "data can be transformed to",
+            rp_metadata_old$info[2],
+            "using the equation below"
+        ),
+        " "
+    )
+
+rec3 <-
+    ifelse(
+        raw_data_okay == "NO" &
+            adjusted_data_okay == "NO",
+        " ", #### Update
+        paste(
+            rp_metadata_old$info[3],
+            "(transformed) = ",
+            rp_metadata_old$info[3],
+            "(raw) -  (",
+            round(intercept, 3),
+            ") / ",
+            round(slope, 3)
+        )
+    )
+```
+
+```{r report_page, echo=FALSE, fig.width=10}
+# Prepare function for black border
+black_border <- fp_border(color = "black", width = 1)
+
+#
+rp_metadata_table %>%
+    rbind(summary_stats_table) %>%
+    add_row(
+        item = "",
+        info = "",
+        item2 = "",
+        info2 = ""
+    ) %>%
+    rbind(r_regression_results_table) %>%
+    add_row(
+        item = "",
+        info = "",
+        item2 = "",
+        info2 = ""
+    ) %>%
+    rbind(t_regression_results_table) %>%
+    add_row(
+        item = rec,
+        info = rec,
+        item2 = rec,
+        info2 = rec
+    ) %>%
+    add_row(
+        item = rec2,
+        info = rec2,
+        item2 = rec2,
+        info2 = rec2
+    ) %>%
+    add_row(
+        item = rec3,
+        info = rec3,
+        item2 = rec3,
+        info2 = rec3
+    ) %>%
+    # Make it flextable
+    flextable() %>%
+    # Set the header to blank
+    set_header_labels(
+        item = paste(
+            rp_metadata_old$info[4],
+            pollutant,
+            "co-location report",
+            sep = " "
+        ),
+        info = paste(
+            rp_metadata_old$info[4],
+            pollutant,
+            "co-location report",
+            sep = " "
+        ),
+        item2 = "",
+        info2 = ""
+    ) %>%
+    # Merge the header row for the results
+    merge_h(i = c(1), part = "header") %>%
+    # Make the header bold
+    bold(part = "header") %>%
+    # Colour the title grey
+    bg(
+        i = 1,
+        bg = "#999999",
+        part = "header"
+    ) %>%
+    # Colour the part of the table grey
+    bg(
+        i = 1:5,
+        bg = "#999999",
+        part = "body"
+    ) %>%
+    # Merge the rows where needed
+    merge_h(i = c(6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27), part = "body") %>%
+    # Make rows bold
+    bold(i = c(6, 10, 15, 21, 25, 27), part = "body") %>%
+    # Colour the sample period test
+    colouring_test_result(., 8, co_location_period > 364) %>%
+    # Colour the sample size test
+    colouring_test_result(., 9, nrow(data) > 40) %>%
+    # Colour the regression results - raw data
+    colouring_test_result(., 17, r_slope_test == "Pass") %>%
+    colouring_test_result(., 18, r_intercept_test == "Pass") %>%
+    colouring_test_result(., 19, r_e_r_u_test == "Pass") %>%
+    # Colour the regression results - transformed data
+    colouring_test_result(., 22, t_slope_test == "Pass") %>%
+    colouring_test_result(., 23, t_intercept_test == "Pass") %>%
+    colouring_test_result(., 24, t_e_r_u_test == "Pass") %>%
+    # Add the black border line
+    border_outer(border = black_border) %>%
+    border_inner_h(border = black_border) %>%
+    border_inner_v(border = black_border) %>%
+    # Adjust the table width
+    autofit()
+
+# Put the plots side by side
+grid.arrange(plot_raw, plot_calibrated, ncol = 2)
+```
+
+## PM NEMS Report
+
+```{r nems_report, echo = FALSE, message = FALSE, fig.width=10}
+## Get the entire metadata table
+output_metadata <-
+    readxl::read_excel(
+        path = data_path,
+        sheet = "Metadata",
+        col_names = FALSE,
+        col_types = c("text", "text")
+    ) %>%
+    # Only keep the rows that we need for this table.
+    slice(1:3, 11, 4, 5, 9, 6, 7) %>% ### Update
+    # Clean the column names
+    janitor::clean_names() %>%
+    # Make the table wider
+    pivot_wider(names_from = x1, values_from = x2) %>%
+    # Clean the column names
+    janitor::clean_names() %>%
+    # Clean the date data type to numeric
+    mutate(
+        sample_start_date = as.numeric(sample_start_date),
+        sample_end_date = as.numeric(sample_end_date)
+    ) %>%
+    # Make the numeric date date type
+    mutate(
+        sample_start_date = janitor::excel_numeric_to_date(sample_start_date),
+        sample_end_date = janitor::excel_numeric_to_date(sample_end_date)
+    ) %>%
+    # Update the format to NZ date format
+    mutate(
+        sample_start_date = format(sample_start_date, "%d-%m-%Y"),
+        sample_end_date = format(sample_end_date, "%d-%m-%Y")
+    ) %>%
+    rename(parameter = pollutant) ### Update
+
+
+## Create the raw data results
+output_raw_data_results <- data %>%
+    # Label each row with the criteria of RM > LV
+    mutate(
+        rm_lv = ifelse(primary_instrument_x > lv, 1, 0),
+        rm_half_lv = ifelse(primary_instrument_x > 0.5 * lv, 1, 0)
+    ) %>%
+    # Summarise the info
+    summarise(
+        n = n(), # Count
+        # outlier_count = outlier_count, # The number of outliers ### Update
+        # outlier_prop = outlier_prop*100, # The proportion of outliers ### Update
+        max_ci = round(max(candidate_instrument_y, na.rm = T), 1), # Max of CI ### Update
+        mean_ci = round(mean(candidate_instrument_y, na.rm = T), 1) # Mean of CI ### Update
+        # number_of_rm_over_half_lv = sum(rm_half_lv, na.rm = T), # Number of PI > 0.5LV
+        # number_of_rm_over_lv = sum(rm_lv, na.rm = T) # Number of PI > LV
+    ) %>%
+    # Add other info to the table
+    mutate(
+        slope_b = round(slope, 3),
+        # uncertainty_b = round(u_slope,3), ### Update
+        intercept_a = round(intercept, 3),
+        # uncertainty_a = round(u_intercept,3), ### Update
+        rsquared = round(r_squared, 3),
+        # combined_uncertainty = round(combined_uncertainty, 3), ### Update
+        ex_rel_u = expanded_relative_uncertainty * 100
+    )
+
+## Create the equivalence result
+equ_results <- case_when(
+    raw_data_okay == "OK" ~ "Equivalent",
+    raw_data_okay == "No" &
+        adjusted_data_okay == "OK" ~ "Needs Transformation",
+    .default = "Not Equivalent"
+) %>%
+    as_tibble_col(column_name = "equivalence")
+
+equ_results_string <- pull(equ_results) ### Update
+
+## Create the transformed results table
+output_transformed_results <- tibble(
+    a_slope_b = round(a_slope, 4),
+    # a_uncertainty_b = round(a_u_slope,3), ### Update
+    a_intercept_a = round(a_intercept, 3),
+    # a_uncertainty_a = round(a_u_intercept,3), ### Update
+    # a_combined_uncertainty = round(a_combined_uncertainty,3), ### Update
+    a_ex_rel_u = ifelse(
+        equ_results_string %in% c("Equivalent", "Needs Transformation"),
+        round(a_expanded_relative_uncertainty * 100, 3),
+        "N/A"
+    ) ### Update
+)
+
+## Create the table
+cbind(output_metadata, output_raw_data_results, equ_results, output_transformed_results) %>%
+    flextable() %>%
+    # Add the header at the top
+    add_header_row(
+        values = c(" ", "Raw Data Results", " ", "Transformed Data Results"),
+        top = TRUE,
+        colwidths = c(12, 4, 1, 3)
+    ) %>%
+    # Set header labels
+    set_header_labels(
+        sample_start_date = "Sample Start Date",
+        sample_end_date = "Sample End Date",
+        organisation = "Organisation", ### Update
+        data_processed_by = "Data processed by:", ### Update
+        site_name = "Site Name",
+        site_co_ordinates_lat_long = "Coordinate (lat/long)", ### Update
+        primary_instrument = "Primary Instrument",
+        candidate_instrument = "Candidate Instrument",
+        n = "Data Points",
+        # outlier_count = 'Outliers', ### Update
+        # outlier_prop = 'Outliers', ### Update
+        max_ci = "Max PM conc \u00b5g/m\u00b3 (Raw)",
+        mean_ci = "Average PM conc \u00b5g/m\u00b3 (Raw)",
+        # number_of_rm_over_half_lv = 'Number of PI>0.5LV',  ### Update
+        # number_of_rm_over_lv = 'Number of PI>LV',  ### Update
+        slope_b = "Slope (raw)",
+        # uncertainty_b = 'Uncertainty of b', ### Update
+        intercept_a = "Intercept (raw)",
+        # uncertainty_a = 'Uncertainty of a', ### Update
+        rsquared = "R\U00B2",
+        # combined_uncertainty = 'Combined Uncertainty', ### Update
+        ex_rel_u = "Expanded Relative Uncertainty",
+        equivalence = "Outcome of equivalency test",
+        a_slope_b = "Slope (transformed)",
+        # a_uncertainty_b = 'Uncertainty of b', ### Update
+        a_intercept_a = "Intercept (transformed)",
+        # a_uncertainty_a = 'Uncertainty of a', ### Update
+        # a_combined_uncertainty = 'Combined Uncertainty', ### Update
+        a_ex_rel_u = "Expanded Relative Uncertainty"
+    ) %>%
+    # Merge the header row
+    merge_h(i = c(1), part = "header") %>%
+    # Make the header bold
+    bold(part = "header") %>%
+    # Colour the title
+    bg(
+        i = 1:2,
+        j = 13:16,
+        bg = "#D9E1F2",
+        part = "header"
+    ) %>%
+    bg(
+        i = 1:2,
+        j = 18:20,
+        bg = "#E2EFDA",
+        part = "header"
+    ) %>%
+    # Colour the table
+    bg(
+        i = 1,
+        j = 13:16,
+        bg = "#D9E1F2",
+        part = "body"
+    ) %>%
+    bg(
+        i = 1,
+        j = 18:20,
+        bg = "#E2EFDA",
+        part = "body"
+    ) %>%
+    # Align the title
+    align(
+        i = 1,
+        align = c("center"),
+        part = "header"
+    ) %>%
+    autofit()
+```
