@@ -11,7 +11,7 @@ Repository of tools and guidance for co-location exercises of air particulate ma
         1. Open the file `pm_colocation_report.Rmd`
         2. Click on the **Knit** button at the top right of the editor panel.
     2. If using a different IDE or text editor
-        1. Open an R session in the `R` folder
+        1. Open an R session in the root folder of this repository.
         2. Give the `knit` command:
         ```
         markdown::render(input = "pm_colocation_report.Rmd")
